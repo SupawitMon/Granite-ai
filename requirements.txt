@@ -1,0 +1,8 @@
+flask
+gunicorn
+torch
+torchvision
+pillow
+opencv-python-headless
+numpy
+gdown
