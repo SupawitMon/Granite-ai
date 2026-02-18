@@ -375,6 +375,8 @@ if __name__ == "__main__":
     print("STONE_LAP_MIN:", STONE_LAP_MIN, "| STONE_EDGE_MIN:", STONE_EDGE_MIN)
     print("===================================")
 
-    # สำคัญตอน deploy: ให้ใช้ PORT จาก environment
+if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    app.run(host="0.0.0.0", port=port)
+
+
