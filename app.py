@@ -41,7 +41,8 @@ STONE_LAP_MIN  = 90.0     # 80-140
 STONE_EDGE_MIN = 0.015    # 0.01-0.03
 
 # ---- Allowed extensions ----
-ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}  # gif allow (แต่จะ reject ด้วยข้อความเฉพาะ)
+# NOTE: อนุญาต gif ให้ "อัปได้" แต่จะตอบว่า "ยังไม่รองรับ GIF" ตามที่ม่อนต้องการ
+ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
@@ -64,6 +65,7 @@ ckpt = torch.load(MODEL_PATH, map_location=DEVICE)
 
 model = models.efficientnet_b3(weights=None)
 model.classifier[1] = nn.Linear(model.classifier[1].in_features, 2)
+
 # รองรับทั้งแบบ dict (มี state_dict) และแบบ state_dict ตรงๆ
 state = ckpt["state_dict"] if isinstance(ckpt, dict) and "state_dict" in ckpt else ckpt
 model.load_state_dict(state, strict=True)
@@ -71,8 +73,6 @@ model.to(DEVICE).eval()
 
 class_to_idx = ckpt.get("class_to_idx") if isinstance(ckpt, dict) else None
 if class_to_idx is None:
-    # ถ้าไฟล์เป็น state_dict ตรงๆ จะไม่มี class_to_idx
-    # แต่ของม่อนใช้ train_best.py ที่เซฟ dict อยู่แล้ว ควรมี
     raise RuntimeError("best_model.pth ไม่มี class_to_idx — กรุณาเซฟโมเดลเป็น dict ที่มี class_to_idx")
 
 CRACK_NAME = "Crack"
@@ -108,10 +108,13 @@ last_uploaded_path = None
 def is_stone_cv(bgr_img):
     gray = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2GRAY)
     lap_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+
     edges = cv2.Canny(gray, 50, 150)
     edge_density = float(np.sum(edges > 0) / (bgr_img.shape[0] * bgr_img.shape[1]))
+
     is_stone = (lap_var >= STONE_LAP_MIN) and (edge_density >= STONE_EDGE_MIN)
     return is_stone, float(lap_var), float(edge_density)
+
 
 def stone_confidence(lap_var, edge_density):
     lap_score  = min(1.0, max(0.0, (lap_var - STONE_LAP_MIN) / (STONE_LAP_MIN * 0.8)))
@@ -129,6 +132,7 @@ def _predict_probs(pil_img: Image.Image):
         logits = model(x)
         probs = torch.softmax(logits, dim=1)[0]
     return float(probs[crack_idx].item()), float(probs[no_crack_idx].item())
+
 
 def predict_image_ai(pil_img: Image.Image):
     if not USE_MULTI_CROP:
@@ -168,6 +172,7 @@ def predict_image_ai(pil_img: Image.Image):
 
     return max(crack_probs), max(no_probs), crack_probs
 
+
 def decide_crack(crack_max, crack_probs):
     crack_hits = sum(p >= HIT_THRESHOLD for p in crack_probs)
     is_crack = (crack_max >= CRACK_THRESHOLD) or (crack_hits >= HIT_K)
@@ -181,18 +186,18 @@ def allowed_file_ext(filename: str):
     ext = os.path.splitext(filename)[1].lower()
     return ext in ALLOWED_EXT, ext
 
+
 def save_upload(file):
     ok, ext = allowed_file_ext(file.filename)
     if not ok:
         return None, None, "BAD_EXT"
 
-    # ถ้าเป็น gif ให้ขึ้นข้อความเฉพาะ (ตามที่ม่อนอยากได้)
+    # ถ้าเป็น gif -> รับไฟล์ได้ แต่ให้ขึ้นข้อความเฉพาะ
     if ext == ".gif":
         return None, None, "GIF_NOT_ALLOWED"
 
-    # กันชื่อซ้ำ
-    if ext not in [".jpg", ".jpeg", ".png", ".webp", ".bmp"]:
-        ext = ".jpg"
+    # กันชื่อซ้ำ + บังคับนามสกุลให้เป็นรูปทั่วไป
+    ext = ext if ext in [".jpg", ".jpeg", ".png", ".webp", ".bmp"] else ".jpg"
 
     unique_name = f"{uuid.uuid4().hex}{ext}"
     file_path = os.path.join(app.config["UPLOAD_FOLDER"], unique_name)
@@ -230,6 +235,7 @@ def index():
             return render_template(
                 "index.html",
                 result_text="❌ ยังไม่รองรับไฟล์ GIF",
+                status="GIF",
                 confidence=0,
                 crack=False,
                 crack_count=0,
@@ -242,6 +248,7 @@ def index():
             return render_template(
                 "index.html",
                 result_text="❌ ไฟล์ภาพไม่ถูกต้อง",
+                status="BAD_IMAGE",
                 confidence=0,
                 crack=False,
                 crack_count=0,
@@ -252,7 +259,7 @@ def index():
 
         last_uploaded_path = file_path
         original_image = url_for("static", filename=f"uploads/{unique_name}")
-        result_image = original_image  # แสดงรูปเดิมทั้งคู่ (ตามเดิม)
+        result_image = original_image
 
         # ---- CV gate ----
         bgr = cv2.imread(file_path)
@@ -260,6 +267,7 @@ def index():
             return render_template(
                 "index.html",
                 result_text="❌ ไฟล์ภาพไม่ถูกต้อง",
+                status="BAD_IMAGE",
                 confidence=0,
                 crack=False,
                 crack_count=0,
@@ -271,7 +279,6 @@ def index():
         ok_stone, lap_var, edge_density = is_stone_cv(bgr)
 
         if not ok_stone:
-            # ไม่ใช่หิน -> สีส้ม (warning) ใน index อยู่แล้ว
             result_text = "❌ ไม่ใช่หิน"
             confidence = stone_confidence(lap_var, edge_density)
             crack = False
@@ -282,6 +289,7 @@ def index():
                 original_image=original_image,
                 result_image=result_image,
                 result_text=result_text,
+                status="NOT_STONE",
                 confidence=confidence,
                 crack=crack,
                 crack_count=crack_count,
@@ -298,11 +306,24 @@ def index():
         confidence = round((crack_max if crack else no_crack_max) * 100, 2)
         result_text = "❌ พบรอยแตก" if crack else "✅ ไม่พบรอยแตก"
 
+        return render_template(
+            "index.html",
+            original_image=original_image,
+            result_image=result_image,
+            result_text=result_text,
+            status="CRACK" if crack else "NO_CRACK",
+            confidence=confidence,
+            crack=crack,
+            crack_count=crack_count,
+            processing_time=processing_time
+        )
+
     return render_template(
         "index.html",
         original_image=original_image,
         result_image=result_image,
         result_text=result_text,
+        status=None,
         confidence=confidence,
         crack=crack,
         crack_count=crack_count,
@@ -353,4 +374,7 @@ if __name__ == "__main__":
     print("CRACK_THRESHOLD:", CRACK_THRESHOLD, "| HIT_THRESHOLD:", HIT_THRESHOLD, "| HIT_K:", HIT_K)
     print("STONE_LAP_MIN:", STONE_LAP_MIN, "| STONE_EDGE_MIN:", STONE_EDGE_MIN)
     print("===================================")
-    app.run(debug=True)
+
+    # สำคัญตอน deploy: ให้ใช้ PORT จาก environment
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=True)
