@@ -15,6 +15,8 @@ from werkzeug.utils import secure_filename
 
 import gdown  # pip install gdown
 
+import torch.serialization
+
 # ==========================================
 # CONFIG
 # ==========================================
@@ -61,7 +63,11 @@ ensure_model()
 # ==========================================
 # LOAD MODEL (checkpoint dict)
 # ==========================================
+
+torch.serialization.add_safe_globals([np.core.multiarray.scalar])
+
 ckpt = torch.load(MODEL_PATH, map_location=DEVICE, weights_only=False)
+
 
 model = models.efficientnet_b3(weights=None)
 model.classifier[1] = nn.Linear(model.classifier[1].in_features, 2)
@@ -377,6 +383,7 @@ if __name__ == "__main__":
 
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
+
 
 
 
