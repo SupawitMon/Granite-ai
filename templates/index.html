@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>Stone AI Inspection</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+
+:root{
+--bg:#0b1423;
+--card:rgba(255,255,255,0.05);
+--text:white;
+--accent1:#00bfff;
+--accent2:#00ffcc;
+--success:#00e676;
+--danger:#ff5252;
+--warning:#ff9800;
+}
+
+body.light{
+--bg:#f4f7fb;
+--card:rgba(0,0,0,0.05);
+--text:#111827;
+--accent1:#2563eb;
+--accent2:#06b6d4;
+--success:#16a34a;
+--danger:#dc2626;
+--warning:#f59e0b;
+}
+
+body{
+font-family:'Inter',sans-serif;
+background:var(--bg);
+color:var(--text);
+min-height:100vh;
+transition:0.4s ease;
+overflow-x:hidden;
+}
+
+/* Grid Background */
+body::before{
+content:"";
+position:fixed;
+inset:0;
+background-image:
+linear-gradient(rgba(255,255,255,0.04) 1px, transparent 1px),
+linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px);
+background-size:40px 40px;
+animation:moveGrid 25s linear infinite;
+z-index:-2;
+}
+@keyframes moveGrid{
+from{background-position:0 0;}
+to{background-position:120px 120px;}
+}
+
+/* Topbar */
+.topbar{
+display:flex;
+justify-content:space-between;
+align-items:center;
+padding:18px 50px;
+background:var(--card);
+backdrop-filter:blur(15px);
+}
+
+.theme-toggle{
+cursor:pointer;
+padding:8px 18px;
+border-radius:20px;
+border:1px solid var(--accent1);
+transition:0.3s;
+}
+.theme-toggle:hover{
+background:var(--accent1);
+color:white;
+}
+
+.status{
+display:flex;
+align-items:center;
+gap:8px;
+font-size:13px;
+}
+
+.dot{
+width:8px;
+height:8px;
+border-radius:50%;
+background:var(--accent2);
+box-shadow:0 0 10px var(--accent2);
+animation:pulse 2s infinite;
+}
+@keyframes pulse{
+0%{opacity:0.5;}
+50%{opacity:1;}
+100%{opacity:0.5;}
+}
+
+/* Container */
+.container{
+max-width:1100px;
+margin:70px auto;
+padding:50px;
+border-radius:25px;
+background:var(--card);
+backdrop-filter:blur(25px);
+box-shadow:0 0 40px rgba(0,255,255,0.05);
+}
+
+.title{
+text-align:center;
+font-family:'Orbitron',sans-serif;
+font-size:42px;
+}
+
+.ai{
+background:linear-gradient(270deg,var(--accent1),var(--accent2),#8b5cf6,var(--accent1));
+background-size:600% 600%;
+-webkit-background-clip:text;
+-webkit-text-fill-color:transparent;
+animation:gradientFlow 6s ease infinite;
+}
+@keyframes gradientFlow{
+0%{background-position:0% 50%;}
+50%{background-position:100% 50%;}
+100%{background-position:0% 50%;}
+}
+
+.subtitle{
+text-align:center;
+margin:15px auto 35px auto;
+font-size:16px;
+opacity:0.85;
+max-width:700px;
+}
+
+button{
+padding:12px 25px;
+border:none;
+border-radius:10px;
+background:linear-gradient(90deg,var(--accent1),var(--accent2));
+color:white;
+cursor:pointer;
+transition:0.3s;
+}
+button:hover{
+transform:scale(1.05);
+box-shadow:0 0 15px var(--accent1);
+}
+
+/* Drag Upload */
+input[type="file"]{
+padding:12px;
+border:2px dashed var(--accent1);
+border-radius:12px;
+background:transparent;
+color:var(--text);
+transition:0.3s;
+}
+input[type="file"].dragover{
+background:rgba(0,255,255,0.08);
+border-color:var(--accent2);
+}
+
+/* Badge */
+.badge{
+padding:20px 35px;
+border-radius:50px;
+margin-top:20px;
+display:inline-block;
+font-weight:600;
+}
+.success{border:1px solid var(--success);color:var(--success);}
+.danger{border:1px solid var(--danger);color:var(--danger);}
+.warning{border:1px solid var(--warning);color:var(--warning);}
+
+/* Shake */
+@keyframes shake{
+0%{transform:translateX(0);}
+25%{transform:translateX(-5px);}
+50%{transform:translateX(5px);}
+75%{transform:translateX(-5px);}
+100%{transform:translateX(0);}
+}
+.shake{animation:shake 0.4s ease;}
+
+/* Progress */
+.progress{
+width:350px;
+height:8px;
+background:rgba(255,255,255,0.1);
+margin:20px auto;
+border-radius:20px;
+overflow:hidden;
+}
+.bar{
+height:100%;
+border-radius:20px;
+width:0%;
+transition:width 1.5s ease;
+}
+
+/* AI Panel */
+.ai-panel{
+margin-top:35px;
+display:flex;
+justify-content:center;
+gap:25px;
+flex-wrap:wrap;
+}
+.ai-card{
+background:var(--card);
+padding:18px 25px;
+border-radius:15px;
+min-width:160px;
+text-align:center;
+backdrop-filter:blur(10px);
+border:1px solid rgba(255,255,255,0.05);
+transition:0.3s;
+}
+.ai-card:hover{
+transform:translateY(-5px);
+box-shadow:0 10px 25px rgba(0,255,255,0.1);
+}
+.ai-label{font-size:12px;opacity:0.6;margin-bottom:8px;}
+.ai-value{font-size:22px;font-weight:600;}
+
+/* Images */
+.image-grid{
+display:flex;
+gap:40px;
+justify-content:center;
+margin-top:40px;
+flex-wrap:wrap;
+}
+.image-box{
+background:var(--card);
+padding:25px;
+border-radius:20px;
+position:relative;
+overflow:hidden;
+transition:all 0.35s ease;
+}
+.image-box:hover{
+transform:translateY(-12px);
+box-shadow:0 25px 45px rgba(0,0,0,0.25);
+}
+.image-box img{
+width:340px;
+border-radius:15px;
+transition:0.4s;
+}
+.image-box:hover img{
+transform:scale(1.06);
+}
+
+/* Scan */
+.scan-overlay{position:absolute;inset:0;pointer-events:none;}
+.scan-line{
+position:absolute;
+width:100%;
+height:4px;
+background:linear-gradient(90deg,transparent,var(--accent2),transparent);
+box-shadow:0 0 20px var(--accent2);
+top:-10%;
+opacity:0;
+}
+@keyframes scanOnce{
+0%{top:-10%;opacity:1;}
+90%{opacity:1;}
+100%{top:110%;opacity:0;}
+}
+.scan-active .scan-line{animation:scanOnce 1.5s ease forwards;}
+
+.flash{
+position:absolute;
+inset:0;
+background:white;
+opacity:0;
+}
+@keyframes flashEffect{
+0%{opacity:0;}
+50%{opacity:0.4;}
+100%{opacity:0;}
+}
+.flash-active{animation:flashEffect 0.5s ease;}
+
+.footer{
+text-align:center;
+margin-top:50px;
+opacity:0.6;
+font-size:13px;
+}
+</style>
+</head>
+
+<body>
+
+<audio id="scanSound" src="https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3"></audio>
+
+<div class="topbar">
+<div><b>Stone <span class="ai">AI</span> Inspection</b></div>
+<div style="display:flex;gap:20px;align-items:center;">
+<div class="status">
+<div class="dot" id="statusDot"></div> AI Online
+</div>
+<div class="theme-toggle" onclick="toggleTheme()">🌙 / ☀</div>
+</div>
+</div>
+
+<div class="container">
+
+<div class="title">
+Stone Defect Detection <span class="ai">AI</span>
+</div>
+
+<div class="subtitle">
+ระบบตรวจสอบคุณภาพของหินด้วยเทคโนโลยี AI Vision
+</div>
+
+<div style="text-align:center;">
+<form method="POST" enctype="multipart/form-data">
+<input type="file" name="file" required>
+<button type="submit">ตรวจสอบคุณภาพ</button>
+</form>
+</div>
+
+{% if result_text %}
+<div style="text-align:center;">
+<div class="badge
+{% if result_text == '❌ ไม่ใช่หิน' %}warning
+{% elif crack %}danger
+{% else %}success{% endif %}">
+{{ result_text }}
+{% if confidence is not none %}
+<br>ความมั่นใจ <span id="confidence">{{ confidence }}</span>%
+{% endif %}
+</div>
+
+<div class="progress">
+<div class="bar" id="progressBar"
+style="background:
+{% if result_text == '❌ ไม่ใช่หิน' %}var(--warning)
+{% elif crack %}var(--danger)
+{% else %}var(--success){% endif %};">
+</div>
+</div>
+</div>
+
+<div class="image-grid">
+
+{% if original_image %}
+<div class="image-box">
+<h3>ภาพต้นฉบับ</h3>
+<img src="{{ original_image }}">
+</div>
+{% endif %}
+
+{% if result_image %}
+<div class="image-box scan-active">
+<h3>ผลการตรวจจับ</h3>
+<img id="resultImg" src="{{ result_image }}" style="filter:blur(5px);">
+<div class="scan-overlay">
+<div class="scan-line"></div>
+<div class="flash" id="flash"></div>
+</div>
+</div>
+{% endif %}
+
+</div>
+
+<div class="ai-panel">
+<div class="ai-card">
+<div class="ai-label">Crack Count</div>
+<div class="ai-value">{{ crack_count }}</div>
+</div>
+<div class="ai-card">
+<div class="ai-label">Processing Time</div>
+<div class="ai-value">{{ processing_time }}s</div>
+</div>
+{% if confidence is not none %}
+<div class="ai-card">
+<div class="ai-label">AI Confidence</div>
+<div class="ai-value" id="aiConfidenceValue">{{ confidence }}%</div>
+</div>
+{% endif %}
+</div>
+
+{% endif %}
+
+<div style="text-align:center; margin-top:30px;">
+<button onclick="window.location.href='/'">
+ตรวจสอบรูปใหม่
+</button>
+<button onclick="reScan()">Scan อีกครั้ง</button>
+</div>
+
+<div class="footer">
+© 2026 Stone AI Inspection | Advanced Vision Technology
+</div>
+
+</div>
+
+<script>
+let animationTimers = {};
+
+function animateValue(id, start, end, duration) {
+    if(animationTimers[id]){
+        cancelAnimationFrame(animationTimers[id]);
+    }
+    const obj = document.getElementById(id);
+    const startTime = performance.now();
+
+    function update(currentTime){
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        const value = start + (end - start) * progress;
+        obj.innerText = value.toFixed(2);
+        if(progress < 1){
+            animationTimers[id] = requestAnimationFrame(update);
+        }
+    }
+    animationTimers[id] = requestAnimationFrame(update);
+}
+
+function reScan(){
+fetch("/rescan", {method:"POST"})
+.then(res=>res.json())
+.then(data=>{
+  document.querySelector(".ai-card:nth-child(1) .ai-value").innerText = data.crack_count;
+  document.querySelector(".ai-card:nth-child(2) .ai-value").innerText = data.processing_time + "s";
+
+  let confEl = document.getElementById("confidence");
+  let confCardEl = document.getElementById("aiConfidenceValue");
+
+  if(confEl && confCardEl){
+    let currentTop = parseFloat(confEl.innerText);
+    let currentBottom = parseFloat(confCardEl.innerText);
+
+    animateValue("confidence", currentTop, data.confidence, 800);
+    animateValue("aiConfidenceValue", currentBottom, data.confidence, 800);
+
+    confCardEl.innerText = data.confidence + "%";
+
+    let bar=document.getElementById("progressBar");
+    bar.style.width="0%";
+    setTimeout(()=>{bar.style.width=data.confidence+"%";},300);
+  }
+});
+}
+
+function toggleTheme(){
+document.body.classList.toggle("light");
+localStorage.setItem("theme",
+document.body.classList.contains("light")?"light":"dark");
+}
+
+window.onload=function(){
+
+if(localStorage.getItem("theme")==="light"){
+document.body.classList.add("light");
+}
+
+let bar=document.getElementById("progressBar");
+let conf=document.getElementById("confidence");
+let resultImg=document.getElementById("resultImg");
+let flash=document.getElementById("flash");
+let scanSound=document.getElementById("scanSound");
+let statusDot=document.getElementById("statusDot");
+
+if(bar&&conf){
+let target=parseFloat(conf.innerText);
+setTimeout(()=>{bar.style.width=target+"%";},300);
+}
+
+if(resultImg){
+setTimeout(()=>{
+resultImg.style.filter="blur(0px)";
+flash.classList.add("flash-active");
+scanSound.play();
+},1400);
+}
+
+let fileInput=document.querySelector('input[type="file"]');
+fileInput.addEventListener("dragover",e=>{
+e.preventDefault();
+fileInput.classList.add("dragover");
+});
+fileInput.addEventListener("dragleave",()=>{
+fileInput.classList.remove("dragover");
+});
+fileInput.addEventListener("drop",()=>{
+fileInput.classList.remove("dragover");
+});
+
+document.addEventListener("mousemove",function(e){
+let x=(window.innerWidth/2-e.clientX)/100;
+let y=(window.innerHeight/2-e.clientY)/100;
+document.body.style.backgroundPosition=`${x}px ${y}px`;
+});
+
+{% if crack %}
+document.querySelector(".badge").classList.add("shake");
+statusDot.style.background="var(--danger)";
+{% elif result_text == '❌ ไม่ใช่หิน' %}
+statusDot.style.background="var(--warning)";
+{% else %}
+statusDot.style.background="var(--success)";
+{% endif %}
+
+};
+</script>
+
+</body>
+</html>
