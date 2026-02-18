@@ -13,11 +13,17 @@ from torchvision import models, transforms
 from flask import Flask, render_template, request, jsonify, url_for
 from werkzeug.utils import secure_filename
 
+import gdown  # pip install gdown
+
 # ==========================================
 # CONFIG
 # ==========================================
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# ---- Model download (Google Drive) ----
 MODEL_PATH = "best_model.pth"
+GDRIVE_FILE_ID = "15dY4OBZ_pii_NR8FnRpESjIpZ8omsXtH"
+
 UPLOAD_FOLDER = "static/uploads"
 
 # ---- LOCKED BEST SETTINGS (ของม่อน) ----
@@ -31,11 +37,25 @@ CROP_RATIO = 0.75
 USE_9_CROP = True
 
 # ---- Stone gate (OpenCV) ----
-# ปรับให้ "เข้มงวดขึ้น" ถ้าแมว/คนยังผ่าน: เพิ่ม STONE_LAP_MIN และ/หรือ STONE_EDGE_MIN
-STONE_LAP_MIN  = 90.0     # แนะนำ 80-140
-STONE_EDGE_MIN = 0.015    # แนะนำ 0.01-0.03
+STONE_LAP_MIN  = 90.0     # 80-140
+STONE_EDGE_MIN = 0.015    # 0.01-0.03
+
+# ---- Allowed extensions ----
+ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif"}  # gif allow (แต่จะ reject ด้วยข้อความเฉพาะ)
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# ==========================================
+# Download model if missing
+# ==========================================
+def ensure_model():
+    if os.path.exists(MODEL_PATH):
+        return
+    print("Downloading model from Google Drive...")
+    url = f"https://drive.google.com/uc?id={GDRIVE_FILE_ID}"
+    gdown.download(url, MODEL_PATH, quiet=False)
+
+ensure_model()
 
 # ==========================================
 # LOAD MODEL (checkpoint dict)
@@ -44,12 +64,16 @@ ckpt = torch.load(MODEL_PATH, map_location=DEVICE)
 
 model = models.efficientnet_b3(weights=None)
 model.classifier[1] = nn.Linear(model.classifier[1].in_features, 2)
-model.load_state_dict(ckpt["state_dict"])
+# รองรับทั้งแบบ dict (มี state_dict) และแบบ state_dict ตรงๆ
+state = ckpt["state_dict"] if isinstance(ckpt, dict) and "state_dict" in ckpt else ckpt
+model.load_state_dict(state, strict=True)
 model.to(DEVICE).eval()
 
-class_to_idx = ckpt.get("class_to_idx")
+class_to_idx = ckpt.get("class_to_idx") if isinstance(ckpt, dict) else None
 if class_to_idx is None:
-    raise RuntimeError("best_model.pth ไม่มี class_to_idx — ต้องเทรนด้วย train_best.py เวอร์ชันที่เซฟ dict")
+    # ถ้าไฟล์เป็น state_dict ตรงๆ จะไม่มี class_to_idx
+    # แต่ของม่อนใช้ train_best.py ที่เซฟ dict อยู่แล้ว ควรมี
+    raise RuntimeError("best_model.pth ไม่มี class_to_idx — กรุณาเซฟโมเดลเป็น dict ที่มี class_to_idx")
 
 CRACK_NAME = "Crack"
 NOCRACK_NAME = "No Crack"
@@ -59,7 +83,7 @@ if CRACK_NAME not in class_to_idx or NOCRACK_NAME not in class_to_idx:
 crack_idx = class_to_idx[CRACK_NAME]
 no_crack_idx = class_to_idx[NOCRACK_NAME]
 
-IMG_SIZE = int(ckpt.get("img_size", 300))
+IMG_SIZE = int(ckpt.get("img_size", 300)) if isinstance(ckpt, dict) else 300
 
 transform = transforms.Compose([
     transforms.Resize((IMG_SIZE, IMG_SIZE)),
@@ -82,28 +106,15 @@ last_uploaded_path = None
 # 🔍 CV Stone Gate
 # ===============================
 def is_stone_cv(bgr_img):
-    """
-    return: (is_stone: bool, lap_var: float, edge_density: float)
-    """
     gray = cv2.cvtColor(bgr_img, cv2.COLOR_BGR2GRAY)
-
-    # texture
     lap_var = cv2.Laplacian(gray, cv2.CV_64F).var()
-
-    # edges
     edges = cv2.Canny(gray, 50, 150)
     edge_density = float(np.sum(edges > 0) / (bgr_img.shape[0] * bgr_img.shape[1]))
-
     is_stone = (lap_var >= STONE_LAP_MIN) and (edge_density >= STONE_EDGE_MIN)
     return is_stone, float(lap_var), float(edge_density)
 
-
 def stone_confidence(lap_var, edge_density):
-    """
-    ให้ตัวเลขความมั่นใจฝั่ง "เป็นหิน" แบบคร่าวๆ (0-100)
-    ไม่ได้ AI จริง แต่ทำให้ UI ดูสมเหตุสมผล
-    """
-    lap_score = min(1.0, max(0.0, (lap_var - STONE_LAP_MIN) / (STONE_LAP_MIN * 0.8)))
+    lap_score  = min(1.0, max(0.0, (lap_var - STONE_LAP_MIN) / (STONE_LAP_MIN * 0.8)))
     edge_score = min(1.0, max(0.0, (edge_density - STONE_EDGE_MIN) / (STONE_EDGE_MIN * 1.0)))
     conf = (0.6 * lap_score + 0.4 * edge_score) * 100.0
     return round(conf, 2)
@@ -119,14 +130,7 @@ def _predict_probs(pil_img: Image.Image):
         probs = torch.softmax(logits, dim=1)[0]
     return float(probs[crack_idx].item()), float(probs[no_crack_idx].item())
 
-
 def predict_image_ai(pil_img: Image.Image):
-    """
-    Returns:
-      crack_max (float),
-      no_crack_max (float),
-      crack_probs (list[float])
-    """
     if not USE_MULTI_CROP:
         c, n = _predict_probs(pil_img)
         return c, n, [c]
@@ -139,19 +143,19 @@ def predict_image_ai(pil_img: Image.Image):
         return (x, y, x + crop_size, y + crop_size)
 
     boxes = [
-        crop_box(0, 0),                                   # TL
-        crop_box(W - crop_size, 0),                       # TR
-        crop_box(0, H - crop_size),                       # BL
-        crop_box(W - crop_size, H - crop_size),           # BR
-        crop_box((W - crop_size)//2, (H - crop_size)//2)  # Center
+        crop_box(0, 0),
+        crop_box(W - crop_size, 0),
+        crop_box(0, H - crop_size),
+        crop_box(W - crop_size, H - crop_size),
+        crop_box((W - crop_size)//2, (H - crop_size)//2),
     ]
 
     if USE_9_CROP:
         boxes += [
-            crop_box((W - crop_size)//2, 0),                 # top-center
-            crop_box((W - crop_size)//2, H - crop_size),     # bottom-center
-            crop_box(0, (H - crop_size)//2),                 # left-center
-            crop_box(W - crop_size, (H - crop_size)//2),     # right-center
+            crop_box((W - crop_size)//2, 0),
+            crop_box((W - crop_size)//2, H - crop_size),
+            crop_box(0, (H - crop_size)//2),
+            crop_box(W - crop_size, (H - crop_size)//2),
         ]
 
     crack_probs = []
@@ -164,7 +168,6 @@ def predict_image_ai(pil_img: Image.Image):
 
     return max(crack_probs), max(no_probs), crack_probs
 
-
 def decide_crack(crack_max, crack_probs):
     crack_hits = sum(p >= HIT_THRESHOLD for p in crack_probs)
     is_crack = (crack_max >= CRACK_THRESHOLD) or (crack_hits >= HIT_K)
@@ -172,7 +175,33 @@ def decide_crack(crack_max, crack_probs):
 
 
 # ===============================
-# 🌐 Route หลัก
+# Helpers
+# ===============================
+def allowed_file_ext(filename: str):
+    ext = os.path.splitext(filename)[1].lower()
+    return ext in ALLOWED_EXT, ext
+
+def save_upload(file):
+    ok, ext = allowed_file_ext(file.filename)
+    if not ok:
+        return None, None, "BAD_EXT"
+
+    # ถ้าเป็น gif ให้ขึ้นข้อความเฉพาะ (ตามที่ม่อนอยากได้)
+    if ext == ".gif":
+        return None, None, "GIF_NOT_ALLOWED"
+
+    # กันชื่อซ้ำ
+    if ext not in [".jpg", ".jpeg", ".png", ".webp", ".bmp"]:
+        ext = ".jpg"
+
+    unique_name = f"{uuid.uuid4().hex}{ext}"
+    file_path = os.path.join(app.config["UPLOAD_FOLDER"], unique_name)
+    file.save(file_path)
+    return file_path, unique_name, "OK"
+
+
+# ===============================
+# 🌐 Routes
 # ===============================
 @app.route("/", methods=["GET", "POST"])
 def index():
@@ -193,39 +222,58 @@ def index():
 
         start_time = time.time()
 
-        # ✅ กันชื่อซ้ำ
-        ext = os.path.splitext(secure_filename(file.filename))[1].lower()
-        if ext not in [".jpg", ".jpeg", ".png", ".webp", ".bmp"]:
-            ext = ".jpg"
-
-        unique_name = f"{uuid.uuid4().hex}{ext}"
-        file_path = os.path.join(app.config["UPLOAD_FOLDER"], unique_name)
-        file.save(file_path)
-        last_uploaded_path = file_path
-
-        # ---- Load for CV gate ----
-        bgr = cv2.imread(file_path)
-        if bgr is None:
-            # อ่านไฟล์ไม่ได้
-            result_text = "❌ ไฟล์ภาพไม่ถูกต้อง"
-            processing_time = round(time.time() - start_time, 3)
-            return render_template("index.html",
-                                   result_text=result_text,
-                                   confidence=0,
-                                   crack=False,
-                                   crack_count=0,
-                                   processing_time=processing_time)
-
-        # ✅ Stone gate ก่อน
-        ok_stone, lap_var, edge_density = is_stone_cv(bgr)
+        file_path, unique_name, status = save_upload(file)
         processing_time = round(time.time() - start_time, 3)
 
+        # ---- handle upload status ----
+        if status == "GIF_NOT_ALLOWED":
+            return render_template(
+                "index.html",
+                result_text="❌ ยังไม่รองรับไฟล์ GIF",
+                confidence=0,
+                crack=False,
+                crack_count=0,
+                processing_time=processing_time,
+                original_image=None,
+                result_image=None
+            )
+
+        if status == "BAD_EXT" or file_path is None:
+            return render_template(
+                "index.html",
+                result_text="❌ ไฟล์ภาพไม่ถูกต้อง",
+                confidence=0,
+                crack=False,
+                crack_count=0,
+                processing_time=processing_time,
+                original_image=None,
+                result_image=None
+            )
+
+        last_uploaded_path = file_path
         original_image = url_for("static", filename=f"uploads/{unique_name}")
-        result_image = original_image  # เอารูปเดิมแสดงทั้งคู่ (เหมือนเดิม)
+        result_image = original_image  # แสดงรูปเดิมทั้งคู่ (ตามเดิม)
+
+        # ---- CV gate ----
+        bgr = cv2.imread(file_path)
+        if bgr is None:
+            return render_template(
+                "index.html",
+                result_text="❌ ไฟล์ภาพไม่ถูกต้อง",
+                confidence=0,
+                crack=False,
+                crack_count=0,
+                processing_time=processing_time,
+                original_image=original_image,
+                result_image=result_image
+            )
+
+        ok_stone, lap_var, edge_density = is_stone_cv(bgr)
 
         if not ok_stone:
+            # ไม่ใช่หิน -> สีส้ม (warning) ใน index อยู่แล้ว
             result_text = "❌ ไม่ใช่หิน"
-            confidence = stone_confidence(lap_var, edge_density)  # % ว่า "เป็นหิน" (ต่ำๆ)
+            confidence = stone_confidence(lap_var, edge_density)
             crack = False
             crack_count = 0
 
@@ -240,7 +288,7 @@ def index():
                 processing_time=processing_time
             )
 
-        # ---- AI Crack/No Crack ----
+        # ---- AI crack ----
         pil_img = Image.open(file_path).convert("RGB")
         crack_max, no_crack_max, crack_probs = predict_image_ai(pil_img)
         is_crack, crack_hits = decide_crack(crack_max, crack_probs)
@@ -248,11 +296,7 @@ def index():
         crack = bool(is_crack)
         crack_count = 1 if crack else 0
         confidence = round((crack_max if crack else no_crack_max) * 100, 2)
-
-        if crack:
-            result_text = "❌ พบรอยแตก"
-        else:
-            result_text = "✅ ไม่พบรอยแตก"
+        result_text = "❌ พบรอยแตก" if crack else "✅ ไม่พบรอยแตก"
 
     return render_template(
         "index.html",
